@@ -49,13 +49,11 @@ fire() {
 
 marker() { echo "$STATE/$SHELL_PID"; }
 
-# Short status into the terminal itself: OSC 777 desktop notification (Ghostty shows it natively).
+# Short status as a macOS notification (message passed as an argument, no quoting issues).
 notify() {
-  local msg="$1" t
-  t=$(ps -o tty= -p "$SHELL_PID" 2>/dev/null | tr -d ' ')
-  [ -n "$t" ] && [ "$t" != "??" ] && [ -w "/dev/$t" ] || return 0
-  msg=$(printf '%s' "$msg" | tr -d '\000-\037' | tr ';' ',' | cut -c1-140)
-  printf '\033]777;notify;Claude /q;%s\a' "$msg" > "/dev/$t" 2>/dev/null || true
+  local msg
+  msg=$(printf '%s' "$1" | tr -d '\000-\037' | cut -c1-140)
+  osascript -e 'on run a' -e 'display notification (item 1 of a) with title "Claude /q"' -e 'end run' "$msg" >/dev/null 2>&1 || true
 }
 
 cmd="${1:-}"

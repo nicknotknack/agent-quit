@@ -2,7 +2,7 @@
 
 Skill `/q` for Claude Code (and other agents): do the last task, then close the terminal tab (Ghostty).
 
-`/q commit and push` or `commit and push /q` → the agent does it without questions, shows a short status notification in Ghostty, and the tab disappears.
+`/q commit and push` or `commit and push /q` → the agent does it without questions, shows a short status notification (macOS), and the tab disappears.
 
 - `/q` is lowercase only, at the very start or very end of the prompt.
 - `skill/q/SKILL.md` — the skill (handles the leading `/q`).
@@ -47,7 +47,7 @@ Run from the repo root. Requires macOS, Ghostty, `jq`, `python3`.
    json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
    EOF
    ```
-3. Ghostty config: set `confirm-close-surface = false`, otherwise Ghostty asks before closing. Allow Ghostty notifications in macOS System Settings → Notifications to see the status.
+3. Ghostty config: set `confirm-close-surface = false`, otherwise Ghostty asks before closing. The status notification is a plain macOS notification (`osascript`, shown as "Script Editor"): allow it in System Settings → Notifications.
 4. Restart Claude Code (hooks and skills are read at session start; `/hooks` also reloads hooks).
 5. Verify without closing anything: `Q_DRY_RUN=1 ~/.claude/skills/q/close-tab mark` prints the shell it would close. Then try `/q say hi` in a throwaway session.
 
@@ -59,7 +59,7 @@ ln -sfn "$PWD/skill/q" ~/.codex/skills/q
 ## How it works
 
 - `UserPromptSubmit` → `close-tab hook-prompt`: prompt starts or ends with `/q` → arm the tab and tell the agent to finish without questions and answer with one status line; otherwise disarm.
-- `Stop` → `close-tab hook-stop`: if armed, send the first line of the final answer as an OSC 777 notification to the tab, then SIGHUP the shell 2 seconds later.
+- `Stop` → `close-tab hook-stop`: if armed, show the first line of the final answer as a macOS notification, then SIGHUP the shell 2 seconds later.
 - If the agent needs the user, it runs `close-tab cancel` and the tab stays.
 
 A closed tab can be restored with Cmd+Z within Ghostty's `undo-timeout`.
