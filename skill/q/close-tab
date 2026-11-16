@@ -12,10 +12,10 @@
 set -u
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/agent-quit"
 
+# Ghostty desktop notification (OSC 9) written to the tab's tty
 notify() {
   [ "${Q_DRY_RUN:-}" = 1 ] && return
-  osascript -e 'on run a' -e 'display notification (item 1 of a) with title "Claude /q"' -e 'end run' \
-    "$(printf '%s' "$1" | tr -d '\000-\037' | cut -c1-140)" >/dev/null 2>&1
+  printf '\e]9;%s\a' "$(printf '%s' "$1" | tr -d '\000-\037' | cut -c1-140)" > "/dev/$TAB_TTY" 2>/dev/null
 }
 
 fire() {
@@ -30,12 +30,12 @@ case "${1:-}" in
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 
-SHELL_PID=$(ps -axo pid=,ppid=,tty=,comm= | awk -v p=$$ '
+read -r SHELL_PID TAB_TTY < <(ps -axo pid=,ppid=,tty=,comm= | awk -v p=$$ '
   { pp[$1] = $2; tt[$1] = $3; c = $4; sub(/.*\//, "", c); sub(/^-/, "", c); cm[$1] = c }
   END { while ((p = pp[p]) > 1) { if (tt[p] == "??") { if (s) break; continue }
                                   if (cm[p] == "login") break; s = p }
-        print s }')
-[ -n "$SHELL_PID" ] || { echo "close-tab: no terminal tab above this process" >&2; exit 1; }
+        if (s) print s, tt[s] }')
+[ -n "${SHELL_PID:-}" ] || { echo "close-tab: no terminal tab above this process" >&2; exit 1; }
 mkdir -p "$STATE"
 MARK="$STATE/$SHELL_PID"
 
