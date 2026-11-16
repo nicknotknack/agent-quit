@@ -1,65 +1,45 @@
 # agent-quit
 
-Skill `/q` for Claude Code (and other agents): do the last task, then close the terminal tab (Ghostty).
+`/q` for Claude Code: do the last task, show a one-line status notification, close the terminal tab.
 
-`/q commit and push` or `commit and push /q` → the agent does it without questions, shows a short status notification (macOS), and the tab disappears.
-
-- `/q` is lowercase only, at the very start or very end of the prompt.
-- `skill/q/SKILL.md` — the skill (handles the leading `/q`).
-- `skill/q/close-tab` — finds the shell that owns the tab and sends it SIGHUP; also the hook handlers. Agent-agnostic.
-- Two global hooks make it work for a trailing `/q` too (a skill is not loaded in that case).
-
-## Install (instructions for an agent)
-
-Run from the repo root. Requires macOS, Ghostty, `jq`, `python3`.
-
-1. Link the skill:
-   ```sh
-   mkdir -p ~/.claude/skills
-   ln -sfn "$PWD/skill/q" ~/.claude/skills/q
-   chmod +x skill/q/close-tab
-   ```
-2. Add the hooks to `~/.claude/settings.json` (back it up first: `cp ~/.claude/settings.json ~/.claude/settings.json.bak`). Merge, don't overwrite: keep existing hooks, append these entries to `hooks.UserPromptSubmit` and `hooks.Stop` unless an entry with the same command is already there.
-   ```json
-   {
-     "hooks": {
-       "UserPromptSubmit": [
-         { "hooks": [{ "type": "command", "command": "$HOME/.claude/skills/q/close-tab hook-prompt" }] }
-       ],
-       "Stop": [
-         { "hooks": [{ "type": "command", "command": "$HOME/.claude/skills/q/close-tab hook-stop" }] }
-       ]
-     }
-   }
-   ```
-   Or with a script:
-   ```sh
-   python3 - <<'EOF'
-   import json, os
-   p = os.path.expanduser('~/.claude/settings.json')
-   d = json.load(open(p)) if os.path.exists(p) else {}
-   cmd = '$HOME/.claude/skills/q/close-tab'
-   for event, arg in (('UserPromptSubmit', 'hook-prompt'), ('Stop', 'hook-stop')):
-       entries = d.setdefault('hooks', {}).setdefault(event, [])
-       full = f'{cmd} {arg}'
-       if not any(h.get('command') == full for e in entries for h in e.get('hooks', [])):
-           entries.append({'hooks': [{'type': 'command', 'command': full}]})
-   json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
-   EOF
-   ```
-3. Ghostty config: set `confirm-close-surface = false`, otherwise Ghostty asks before closing. The status notification is a plain macOS notification (`osascript`, shown as "Script Editor"): allow it in System Settings → Notifications.
-4. Restart Claude Code (hooks and skills are read at session start; `/hooks` also reloads hooks).
-5. Verify without closing anything: `Q_DRY_RUN=1 ~/.claude/skills/q/close-tab mark` prints the shell it would close. Then try `/q say hi` in a throwaway session.
-
-Codex (no Stop hook; the skill runs `close-tab now 3 "<status>"` itself):
-```sh
-ln -sfn "$PWD/skill/q" ~/.codex/skills/q
 ```
+/q commit and push
+commit and push /q
+```
+
+Requires macOS, [Ghostty](https://ghostty.org), `jq`.
+
+## Install
+
+```sh
+git clone https://github.com/nicknotknack/agent-quit ~/.agent-quit
+mkdir -p ~/.claude/skills
+ln -sfn ~/.agent-quit/skill/q ~/.claude/skills/q
+```
+
+Add the hooks to `~/.claude/settings.json` (merge with existing `hooks`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "$HOME/.claude/skills/q/close-tab hook-prompt" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "$HOME/.claude/skills/q/close-tab hook-stop" }] }
+    ]
+  }
+}
+```
+
+In the Ghostty config set `confirm-close-surface = false`, then restart Claude Code.
+
+Check: `Q_DRY_RUN=1 ~/.claude/skills/q/close-tab now` prints the shell it would close.
 
 ## How it works
 
-- `UserPromptSubmit` → `close-tab hook-prompt`: prompt starts or ends with `/q` → arm the tab and tell the agent to finish without questions and answer with one status line; otherwise disarm.
-- `Stop` → `close-tab hook-stop`: if armed, show the first line of the final answer as a macOS notification, then SIGHUP the shell 2 seconds later.
-- If the agent needs the user, it runs `close-tab cancel` and the tab stays.
+- `UserPromptSubmit`: a prompt that starts or ends with `/q` arms the tab; any other prompt disarms it.
+- `Stop`: if armed, the first line of the answer goes to a macOS notification and the tab's shell gets `SIGHUP` 2 s later.
+- If the agent needs you, it runs `close-tab cancel` and the tab stays.
 
-A closed tab can be restored with Cmd+Z within Ghostty's `undo-timeout`.
+Undo a closed tab with `Cmd+Z` (Ghostty `undo-timeout`).

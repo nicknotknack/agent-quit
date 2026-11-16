@@ -1,92 +1,62 @@
 #!/bin/bash
-# close-tab: close the terminal tab that hosts the current agent session (Claude Code, Codex, ...).
+# close-tab: close the terminal tab that hosts the current agent session.
 #
-#   close-tab mark         arm: close the tab when the agent finishes its turn (Stop hook does it)
-#   close-tab cancel       disarm
-#   close-tab now [secs]   close the tab in `secs` (default 2), detached; for agents without a Stop hook
-#   close-tab hook-stop    Stop hook: if armed, close the tab right now
-#   close-tab hook-reset   UserPromptSubmit hook: disarm (a new prompt means the user is still here)
-#   close-tab hook-prompt  UserPromptSubmit hook: prompt starts/ends with a lowercase `/q` -> arm + tell the agent; else disarm
+#   close-tab hook-prompt          UserPromptSubmit hook: prompt starts/ends with `/q` -> arm; else disarm
+#   close-tab hook-stop            Stop hook: if armed, notify with the status line and close the tab
+#   close-tab cancel               disarm
+#   close-tab now [secs] [status]  notify and close in `secs` (default 2); for agents without hooks
 #
-# How it works: walk up the process tree from this script to the shell that owns the tab
-# (the topmost ancestor on a real tty, below `login`). SIGHUP to that shell makes it exit and
-# hang up the agent running inside it; the terminal then closes the tab by itself
-# (Ghostty: confirm-close-surface = false, otherwise it asks).
-# Env: Q_DELAY (seconds before closing, default 2), Q_DRY_RUN=1 (print the target, kill nothing).
+# Finds the topmost ancestor on a tty (below `login`) = the tab's shell, and SIGHUPs it.
+# Env: Q_DELAY (default 2), Q_DRY_RUN=1 (print the target, close nothing).
 
 set -u
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/agent-quit"
-MARK_TTL_MIN=60
 
-SHELL_PID=""; AGENT_PID=""
-
-resolve() {
-  local pid=$$ tty comm prev=""
-  while :; do
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
-    tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
-    comm=$(ps -o comm= -p "$pid" 2>/dev/null | sed 's:.*/::; s/^-//')
-    [ "$tty" = "??" ] || [ -z "$tty" ] && { [ -n "$SHELL_PID" ] && break; continue; }
-    [ "$comm" = "login" ] && break
-    AGENT_PID="$prev"; SHELL_PID="$pid"; prev="$pid"
-  done
-  [ -n "$SHELL_PID" ]
+notify() {
+  [ "${Q_DRY_RUN:-}" = 1 ] && return
+  osascript -e 'on run a' -e 'display notification (item 1 of a) with title "Claude /q"' -e 'end run' \
+    "$(printf '%s' "$1" | tr -d '\000-\037' | cut -c1-140)" >/dev/null 2>&1
 }
-
-die() { echo "close-tab: $*" >&2; exit 1; }
 
 fire() {
-  local delay="${1:-${Q_DELAY:-2}}"
-  if [ "${Q_DRY_RUN:-}" = 1 ]; then
-    echo "would close tab in ${delay}s: shell=$SHELL_PID agent=${AGENT_PID:-none}"
-    return 0
-  fi
-  # fully detached (own session), so it outlives the agent's own cleanup
+  if [ "${Q_DRY_RUN:-}" = 1 ]; then echo "would close shell $SHELL_PID in ${1}s"; return; fi
+  # detached in its own session so it outlives the agent
   perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' \
-    /bin/sh -c "sleep $delay; kill -HUP $SHELL_PID" >/dev/null 2>&1 </dev/null &
+    /bin/sh -c "sleep $1; kill -HUP $SHELL_PID" >/dev/null 2>&1 </dev/null &
 }
 
-marker() { echo "$STATE/$SHELL_PID"; }
-
-# Short status as a macOS notification (message passed as an argument, no quoting issues).
-notify() {
-  local msg
-  msg=$(printf '%s' "$1" | tr -d '\000-\037' | cut -c1-140)
-  osascript -e 'on run a' -e 'display notification (item 1 of a) with title "Claude /q"' -e 'end run' "$msg" >/dev/null 2>&1 || true
-}
-
-cmd="${1:-}"
-case "$cmd" in
-  mark|cancel|now|hook-stop|hook-reset|hook-prompt) ;;
+case "${1:-}" in
+  hook-prompt|hook-stop|cancel|now) ;;
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 
-resolve || die "no terminal tab found above this process (not run from a terminal agent?)"
+SHELL_PID=$(ps -axo pid=,ppid=,tty=,comm= | awk -v p=$$ '
+  { pp[$1] = $2; tt[$1] = $3; c = $4; sub(/.*\//, "", c); sub(/^-/, "", c); cm[$1] = c }
+  END { while ((p = pp[p]) > 1) { if (tt[p] == "??") { if (s) break; continue }
+                                  if (cm[p] == "login") break; s = p }
+        print s }')
+[ -n "$SHELL_PID" ] || { echo "close-tab: no terminal tab above this process" >&2; exit 1; }
 mkdir -p "$STATE"
+MARK="$STATE/$SHELL_PID"
 
-case "$cmd" in
-  mark)       : > "$(marker)"; echo "armed: tab closes when this turn ends (shell $SHELL_PID)";;
-  cancel)     rm -f "$(marker)"; echo "disarmed";;
-  now)        notify "${3:-Задача выполнена}"; fire "${2:-2}"; echo "tab closes in ${2:-2}s";;
-  hook-reset) rm -f "$(marker)";;
+case "$1" in
+  cancel) rm -f "$MARK"; echo disarmed ;;
+  now)    notify "${3:-Done}"; fire "${2:-2}" ;;
   hook-prompt)
-    prompt=$(jq -r '.prompt // ""' 2>/dev/null)
+    prompt=$(jq -r '.prompt // ""')
     if [[ $prompt =~ ^[[:space:]]*/q([[:space:]]|$) || $prompt =~ (^|[[:space:]])/q[[:space:]]*$ ]]; then
-      : > "$(marker)"
+      : > "$MARK"
       jq -n '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:"В промпте есть команда /q (в начале или в конце; сама она не часть задачи). Выполни задачу полностью, без уточняющих вопросов. Вкладка терминала уже взведена на закрытие после твоего ответа, ничего для этого не запускай. Финальный ответ: ОДНА короткая строка-статус (что сделано / чем кончилось), без хвоста про закрытие, она уйдёт уведомлением в терминал. Если без пользователя не обойтись (решение, блокер) — запусти $HOME/.claude/skills/q/close-tab cancel, задай вопрос и не закрывай вкладку."}}'
     else
-      rm -f "$(marker)"
-    fi;;
+      rm -f "$MARK"
+    fi ;;
   hook-stop)
-    input=$(cat 2>/dev/null)
-    m="$(marker)"
-    # marker must exist and be fresh; stale ones (interrupted /q) are ignored
-    if [ -n "$(find "$m" -mmin -$MARK_TTL_MIN 2>/dev/null)" ]; then
-      rm -f "$m"
-      status=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/null | grep -v '^[[:space:]]*$' | head -1)
-      notify "${status:-Задача выполнена}"
-      fire
-    fi;;
+    # fresh marker only: a stale one (interrupted /q) is ignored
+    if [ -n "$(find "$MARK" -mmin -60 2>/dev/null)" ]; then
+      rm -f "$MARK"
+      status=$(jq -r '.last_assistant_message // ""' | grep -v '^[[:space:]]*$' | head -1)
+      notify "${status:-Done}"
+      fire "${Q_DELAY:-2}"
+    fi ;;
 esac
 exit 0
