@@ -44,6 +44,8 @@ case "$1" in
   now)    notify "${3:-Done}"; fire "${2:-2}" ;;
   hook-prompt)
     prompt=$(jq -r '.prompt // ""')
+    # system-injected (background task finished), not the user: leave the marker as is
+    [[ $prompt == '<task-notification>'* ]] && exit 0
     if [[ $prompt =~ ^[[:space:]]*/q([[:space:]]|$) || $prompt =~ (^|[[:space:]])/q[[:space:]]*$ ]]; then
       : > "$MARK"
       jq -n '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:"В промпте есть команда /q (в начале или в конце; сама она не часть задачи). Выполни задачу полностью, без уточняющих вопросов. Вкладка терминала уже взведена на закрытие после твоего ответа, ничего для этого не запускай. Финальный ответ: ОДНА короткая строка-статус (что сделано / чем кончилось), без хвоста про закрытие, она уйдёт уведомлением в терминал. Если без пользователя не обойтись (решение, блокер) — запусти $HOME/.claude/skills/q/close-tab cancel, задай вопрос и не закрывай вкладку."}}'

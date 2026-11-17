@@ -49,7 +49,7 @@ Install agent-quit for me: follow the "Manual install" section of https://github
 
 ## How it works
 
-- `UserPromptSubmit` hook: a prompt that starts or ends with `/q` arms the tab; any other prompt disarms it.
+- `UserPromptSubmit` hook: a prompt that starts or ends with `/q` arms the tab; any other prompt disarms it (background-task notifications are ignored).
 - `Stop` hook: if armed, the first line of the answer is shown as a Ghostty notification, and the tab's shell gets `SIGHUP` 2 s later.
 - If the agent needs you, it runs `close-tab cancel` and the tab stays.
 
